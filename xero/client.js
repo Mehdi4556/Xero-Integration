@@ -1,24 +1,43 @@
 const { XeroClient } = require("xero-node");
 require("dotenv").config();
 
+// Initialize Xero client for webhook processing (without auto-connecting)
 const xero = new XeroClient({
   clientId: process.env.XERO_CLIENT_ID,
   clientSecret: process.env.XERO_CLIENT_SECRET,
   redirectUris: [process.env.XERO_REDIRECT_URI],
-  scopes: "openid profile email accounting.transactions offline_access",
+  scopes: [
+    "openid",
+    "profile", 
+    "email",
+    "accounting.transactions",
+    "accounting.settings",
+    "offline_access"
+  ],
+  clockTolerance: 60
 });
 
-(async () => {
+// Function to initialize with fresh tokens (call after OAuth)
+async function initializeWithTokens(tokenSet) {
   await xero.initialize();
-  await xero.setTokenSet({
-    access_token: process.env.XERO_ACCESS_TOKEN,
-    refresh_token: process.env.XERO_REFRESH_TOKEN,
-    id_token: process.env.XERO_ID_TOKEN,
-    expires_at: Date.now() + 3600 * 1000,
-  });
-
+  await xero.setTokenSet(tokenSet);
+  
   const connections = await xero.updateTenants();
   global.tenantId = connections[0].tenantId;
-})();
+  
+  return connections[0].tenantId;
+}
 
-module.exports = { xero, tenantId: global.tenantId };
+// Function to get tenant ID (safer approach)
+function getTenantId() {
+  return global.tenantId || null;
+}
+
+module.exports = { 
+  xero, 
+  initializeWithTokens,
+  getTenantId,
+  get tenantId() {
+    return global.tenantId;
+  }
+};

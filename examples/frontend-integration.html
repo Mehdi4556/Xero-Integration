@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Frontend Integration Example</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 1000px; margin: 0 auto; }
+        .section { margin: 30px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        .code { background: #f4f4f4; padding: 15px; border-radius: 4px; overflow-x: auto; }
+        pre { margin: 0; }
+        .button { background: #007cff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin: 10px 0; }
+        .button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <h1>🔗 Frontend Integration Guide</h1>
+    <p>This guide shows how to integrate your frontend (React, Vue, vanilla JS, etc.) with the order-to-invoice API.</p>
+    
+    <div class="section">
+        <h2>📦 1. Order Data Format</h2>
+        <p>Your order data should follow this structure:</p>
+        <div class="code">
+            <pre>
+{
+  "customer": {
+    "first_name": "John",
+    "last_name": "Doe",
+    "email": "john.doe@example.com"
+  },
+  "line_items": [
+    {
+      "title": "Product Name",
+      "quantity": 2,
+      "price": 50.00,
+      "sku": "PROD-001", // Optional
+      "taxable": true, // Optional
+      "properties": [ // Optional - for special calculations
+        {"name": "Length", "value": "10"},
+        {"name": "Width", "value": "8"},
+        {"name": "PricePerSqFt", "value": "1.5"}
+      ]
+    }
+  ],
+  "currency": "USD",
+  "shipping_lines": [ // Optional
+    {
+      "price": 15.00,
+      "title": "Standard Shipping"
+    }
+  ],
+  "total_tax": 8.50, // Optional
+  "total_discounts": 5.00, // Optional
+  "order_number": "ORDER-001", // Optional
+  "note": "Special instructions" // Optional
+}
+            </pre>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>🚀 2. JavaScript Integration</h2>
+        <p>Here's how to send order data to create an invoice:</p>
+        <div class="code">
+            <pre>
+async function createInvoice(orderData) {
+  try {
+    const response = await fetch('/api/custom/order', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(orderData)
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      console.log('Invoice created:', result.invoice);
+      // Handle success - show confirmation, redirect, etc.
+      alert(`Invoice ${result.invoice.number} created successfully!`);
+      window.open(result.invoice.url, '_blank'); // Open in Xero
+    } else {
+      console.error('Error:', result.error);
+      // Handle error - show error message
+      alert('Failed to create invoice: ' + result.error);
+    }
+  } catch (error) {
+    console.error('Network error:', error);
+    alert('Network error: ' + error.message);
+  }
+}
+
+// Example usage
+const orderData = {
+  customer: {
+    first_name: "John",
+    last_name: "Doe",
+    email: "john.doe@example.com"
+  },
+  line_items: [
+    {
+      title: "Premium Widget",
+      quantity: 1,
+      price: 99.99
+    }
+  ],
+  currency: "USD"
+};
+
+createInvoice(orderData);
+            </pre>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>⚛️ 3. React Integration Example</h2>
+        <p>Here's how to integrate with React:</p>
+        <div class="code">
+            <pre>
+import React, { useState } from 'react';
+
+function OrderForm() {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setResult(null);
+    
+    const formData = new FormData(e.target);
+    const orderData = {
+      customer: {
+        first_name: formData.get('firstName'),
+        last_name: formData.get('lastName'),
+        email: formData.get('email')
+      },
+      line_items: [{
+        title: formData.get('productName'),
+        quantity: parseInt(formData.get('quantity')),
+        price: parseFloat(formData.get('price'))
+      }],
+      currency: formData.get('currency') || 'USD'
+    };
+    
+    try {
+      const response = await fetch('/api/custom/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderData)
+      });
+      
+      const result = await response.json();
+      setResult(result);
+    } catch (error) {
+      setResult({ success: false, error: error.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  return (
+    &lt;form onSubmit={handleSubmit}&gt;
+      &lt;input name="firstName" placeholder="First Name" required /&gt;
+      &lt;input name="lastName" placeholder="Last Name" required /&gt;
+      &lt;input name="email" type="email" placeholder="Email" required /&gt;
+      &lt;input name="productName" placeholder="Product Name" required /&gt;
+      &lt;input name="quantity" type="number" placeholder="Quantity" required /&gt;
+      &lt;input name="price" type="number" step="0.01" placeholder="Price" required /&gt;
+      &lt;input name="currency" placeholder="Currency" defaultValue="USD" /&gt;
+      
+      &lt;button type="submit" disabled={loading}&gt;
+        {loading ? 'Creating...' : 'Create Invoice'}
+      &lt;/button&gt;
+      
+      {result && (
+        &lt;div className={result.success ? 'success' : 'error'}&gt;
+          {result.success ? (
+            &lt;p&gt;Invoice {result.invoice.number} created! 
+               &lt;a href={result.invoice.url} target="_blank"&gt;View in Xero&lt;/a&gt;&lt;/p&gt;
+          ) : (
+            &lt;p&gt;Error: {result.error}&lt;/p&gt;
+          )}
+        &lt;/div&gt;
+      )}
+    &lt;/form&gt;
+  );
+}
+
+export default OrderForm;
+            </pre>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>🛍️ 4. Shopify Integration</h2>
+        <p>For Shopify stores, configure webhooks to send order data automatically:</p>
+        <div class="code">
+            <pre>
+// In your Shopify admin:
+// 1. Go to Settings → Notifications
+// 2. Scroll to "Webhooks" section
+// 3. Add webhook:
+//    - Event: Order creation
+//    - Format: JSON
+//    - URL: https://your-domain.com/api/shopify/order
+
+// Or use Shopify CLI/API:
+curl -X POST "https://your-shop.myshopify.com/admin/api/2023-10/webhooks.json" \
+  -H "X-Shopify-Access-Token: YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "webhook": {
+      "topic": "orders/create",
+      "address": "https://your-domain.com/api/shopify/order",
+      "format": "json"
+    }
+  }'
+            </pre>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>📊 5. Monitoring & Debugging</h2>
+        <p>Check invoice status and debug issues:</p>
+        <div class="code">
+            <pre>
+// Get all invoice records
+fetch('/api/invoices')
+  .then(response => response.json())
+  .then(data => {
+    console.log('Invoices:', data.invoices);
+    console.log('Errors:', data.errors);
+  });
+
+// Get specific invoice by order ID
+fetch('/api/invoice/ORDER-123')
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      console.log('Invoice:', data.invoice);
+    } else {
+      console.log('Not found');
+    }
+  });
+            </pre>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>🔐 6. Security Considerations</h2>
+        <ul>
+            <li><strong>Validation:</strong> Always validate data on the server side</li>
+            <li><strong>Rate Limiting:</strong> Implement rate limiting to prevent abuse</li>
+            <li><strong>Authentication:</strong> Consider adding API keys or authentication</li>
+            <li><strong>HTTPS:</strong> Always use HTTPS in production</li>
+            <li><strong>Webhooks:</strong> Verify webhook signatures for Shopify</li>
+        </ul>
+    </div>
+    
+    <div class="section">
+        <h2>🧪 7. Testing</h2>
+        <p>Test the integration with our built-in test form:</p>
+        <button class="button" onclick="window.open('/test', '_blank')">
+            🧪 Open Test Form
+        </button>
+    </div>
+</body>
+</html> 

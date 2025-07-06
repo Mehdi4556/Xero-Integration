@@ -108,11 +108,11 @@ function transformOrderToInvoice(order) {
 }
 
 // Shopify webhook endpoint for order creation
-router.post("/order", async (req, res) => {
+router.post("/shopify/order", async (req, res) => {
   const order = req.body;
   
   try {
-    console.log("📦 Received order webhook:", order.order_number || order.id);
+    console.log("📦 Received Shopify order:", order.order_number || order.id);
     
     // Check if we have valid tokens
     const tenantId = getTenantId();
@@ -124,7 +124,6 @@ router.post("/order", async (req, res) => {
     const invoiceData = transformOrderToInvoice(order);
     
     console.log("🔄 Creating invoice in Xero...");
-    console.log("Invoice data:", JSON.stringify(invoiceData, null, 2));
     
     // Create invoice in Xero
     const response = await xero.accountingApi.createInvoices(tenantId, {
@@ -191,7 +190,7 @@ router.post("/order", async (req, res) => {
 });
 
 // Custom frontend endpoint for order submission
-router.post("/order/custom", async (req, res) => {
+router.post("/custom/order", async (req, res) => {
   const orderData = req.body;
   
   try {
@@ -303,4 +302,4 @@ router.get("/invoice/:orderId", (req, res) => {
   });
 });
 
-module.exports = router;
+module.exports = router; 
