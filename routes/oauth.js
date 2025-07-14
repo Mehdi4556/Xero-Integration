@@ -1,6 +1,7 @@
 const express = require("express");
 const { XeroClient } = require("xero-node");
 const fs = require('fs');
+const path = require('path');
 const router = express.Router();
 
 // Add request tracking
@@ -73,112 +74,84 @@ const callbackHandler = async (req, res) => {
     console.log("🔁 Refresh Token received:", tokenSet.refresh_token ? "Yes" : "No");
     console.log("🧠 ID Token received:", tokenSet.id_token ? "Yes" : "No");
 
+    if (!tokenSet.access_token) {
+      return res.send(`
+        <h2>❌ OAuth Failed</h2>
+        <pre>Error: Access token is undefined!</pre>
+        <a href="/oauth/auth">🔄 Try again</a>
+      `);
+    }
+
     // Try to update tenants with better error handling
+    let tenantId = null;
     try {
       console.log("🔄 Fetching tenant information...");
       await xero.updateTenants();
-      
-      // ✅ Log Them Yourself (Manually)
-      console.log("Access Token:", xero.readTokenSet().access_token);
-      console.log("Refresh Token:", xero.readTokenSet().refresh_token);
-      console.log("ID Token:", xero.readTokenSet().id_token);
-      
-      const tenantId = xero.tenants[0]?.tenantId;
+      tenantId = xero.tenants[0]?.tenantId;
       console.log("🏢 Tenant ID:", tenantId);
       console.log("🏢 Number of tenants:", xero.tenants.length);
-
-      // 💾 Save tokens to JSON file (quick hack for testing)
-      const tokenData = {
-        access_token: tokenSet.access_token,
-        refresh_token: tokenSet.refresh_token,
-        id_token: tokenSet.id_token,
-        tenant_id: tenantId,
-        expires_at: tokenSet.expires_at,
-        timestamp: new Date().toISOString()
-      };
-      
-      try {
-        fs.writeFileSync('tokens.json', JSON.stringify(tokenData, null, 2));
-        console.log("💾 Tokens saved to tokens.json");
-      } catch (fileErr) {
-        console.error("❌ Failed to save tokens to file:", fileErr.message);
-      }
-      
-      // Initialize the Xero client with fresh tokens for other modules
-      const { initializeWithTokens } = require("../xero/client");
-      await initializeWithTokens(xero.readTokenSet());
-      
-      res.send(`
-        <html>
-          <body style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2>✅ OAuth Success!</h2>
-            <p><strong>Access Token:</strong> ${tokenSet.access_token ? 'Received' : 'Missing'}</p>
-            <p><strong>Refresh Token:</strong> ${tokenSet.refresh_token ? 'Received' : 'Missing'}</p>
-            <p><strong>Tenant ID:</strong> ${tenantId || 'Not available'}</p>
-            <p><strong>Tenants:</strong> ${xero.tenants.length}</p>
-            <p><strong>Tokens Saved:</strong> Yes (tokens.json)</p>
-            <p>Check your terminal for full details.</p>
-            <hr>
-            <p><a href="/oauth/auth">🔄 Try again</a> | <a href="/oauth/status">📊 Check Status</a></p>
-          </body>
-        </html>
-      `);
-      
     } catch (tenantErr) {
       console.warn("⚠️ Could not fetch tenant information:", tenantErr.message);
       console.log("💡 Tokens are still valid, but tenant access may be limited");
-      
-      // Still save tokens even if tenant fetch fails
-      const tokenData = {
-        access_token: tokenSet.access_token,
-        refresh_token: tokenSet.refresh_token,
-        id_token: tokenSet.id_token,
-        tenant_id: null,
-        expires_at: tokenSet.expires_at,
-        timestamp: new Date().toISOString(),
-        tenant_error: tenantErr.message
-      };
-      
-      try {
-        fs.writeFileSync('tokens.json', JSON.stringify(tokenData, null, 2));
-        console.log("💾 Tokens saved to tokens.json (without tenant info)");
-      } catch (fileErr) {
-        console.error("❌ Failed to save tokens to file:", fileErr.message);
-      }
-      
-      res.send(`
-        <html>
-          <body style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2>⚠️ Partial Success</h2>
-            <p><strong>Access Token:</strong> ${tokenSet.access_token ? 'Received' : 'Missing'}</p>
-            <p><strong>Refresh Token:</strong> ${tokenSet.refresh_token ? 'Received' : 'Missing'}</p>
-            <p><strong>Issue:</strong> Could not fetch organization details</p>
-            <p><strong>Reason:</strong> ${tenantErr.message}</p>
-            <p><strong>Tokens Saved:</strong> Yes (tokens.json)</p>
-            <p>Your tokens are valid, but you may need additional permissions.</p>
-            <hr>
-            <p><a href="/oauth/auth">🔄 Try again</a> | <a href="/oauth/status">📊 Check Status</a></p>
-          </body>
-        </html>
-      `);
     }
-    
+
+    const tokensFilePath = path.join(__dirname, '..', 'tokens.json');
+
+    const tokenData = {
+      access_token: tokenSet.access_token,
+      refresh_token: tokenSet.refresh_token,
+      id_token: tokenSet.id_token,
+      tenant_id: tenantId,
+      expires_at: tokenSet.expires_at,
+      savedAt: new Date().toISOString()
+    };
+
+    fs.writeFileSync(tokensFilePath, JSON.stringify(tokenData, null, 2), 'utf-8');
+    console.log("💾 Tokens saved to tokens.json");
+
+    // Initialize the Xero client with fresh tokens for other modules
+    try {
+      const { initializeWithTokens } = require("../xero/client");
+      await initializeWithTokens(xero.readTokenSet());
+    } catch (initErr) {
+      console.warn("⚠️ Could not initialize Xero client:", initErr.message);
+    }
+
     // Reset auth flag on successful callback
     isAuthInProgress = false;
-    
+
+    res.send(`
+      <html>
+        <head>
+          <title>✅ OAuth Success</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 30px; }
+            .success { background: #e8f5e9; padding: 20px; border-left: 6px solid #4CAF50; }
+            code { background: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
+          </style>
+        </head>
+        <body>
+          <div class="success">
+            <h2>✅ OAuth Success!</h2>
+            <p><strong>Access Token:</strong> <code>${tokenSet.access_token.slice(0, 12)}...${tokenSet.access_token.slice(-8)}</code></p>
+            <p><strong>Refresh Token:</strong> <code>${tokenSet.refresh_token.slice(0, 12)}...${tokenSet.refresh_token.slice(-8)}</code></p>
+            <p><strong>ID Token:</strong> <code>${tokenSet.id_token.slice(0, 12)}...${tokenSet.id_token.slice(-8)}</code></p>
+            <p><strong>Tenant ID:</strong> <code>${tenantId || 'Not available'}</code></p>
+            <p><strong>Tokens Saved:</strong> ✅ <code>tokens.json</code></p>
+          </div>
+          
+          <br>
+          <a href="/oauth/status">📊 View OAuth Status</a>
+        </body>
+      </html>
+    `);
   } catch (err) {
     isAuthInProgress = false;
     console.error("❌ OAuth callback failed:", err);
-    res.status(500).send(`
-      <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px;">
-          <h2>❌ OAuth Failed</h2>
-          <p><strong>Error:</strong> ${err.message}</p>
-          <pre>${JSON.stringify(err, null, 2)}</pre>
-          <hr>
-          <p><a href="/oauth/auth">🔄 Try again</a></p>
-        </body>
-      </html>
+    res.send(`
+      <h2>❌ OAuth Callback Error</h2>
+      <pre>${err.message}</pre>
+      <a href="/oauth/auth">🔄 Try again</a>
     `);
   }
 };
