@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { xero, getTenantId } = require("../xero/client");
+const { xero, getTenantId, ensureXeroConnection, loadTokensFromFile } = require("../xero/client");
 
 // In-memory storage for invoice records (use a database in production)
 const invoiceRecords = new Map();
@@ -114,23 +114,66 @@ router.post("/shopify/order", async (req, res) => {
   try {
     console.log("📦 Received Shopify order:", order.order_number || order.id);
     
-    // Check if we have valid tokens
-    const tenantId = getTenantId();
-    if (!tenantId) {
-      throw new Error("Xero not connected. Please complete OAuth flow first.");
+    // 🔧 Enhanced connection verification
+    console.log("🔍 Checking Xero connection...");
+    
+    // Load and verify tokens
+    const savedTokens = loadTokensFromFile();
+    if (!savedTokens) {
+      throw new Error("No tokens found in tokens.json. Please complete OAuth flow first.");
     }
+    
+    console.log("📊 Token status:", {
+      hasAccessToken: !!savedTokens.access_token,
+      hasRefreshToken: !!savedTokens.refresh_token,
+      tenantId: savedTokens.tenant_id,
+      savedAt: savedTokens.savedAt
+    });
+    
+    // Ensure Xero connection is established
+    const tenantId = await ensureXeroConnection();
+    if (!tenantId) {
+      throw new Error("Failed to establish Xero connection. Please check your OAuth setup.");
+    }
+    
+    console.log("✅ Xero connection verified. Tenant ID:", tenantId);
 
     // Transform order to Xero invoice format
     const invoiceData = transformOrderToInvoice(order);
     
+    console.log("📋 Invoice payload:", JSON.stringify({
+      type: invoiceData.type,
+      contact: invoiceData.contact.name,
+      lineItemsCount: invoiceData.lineItems.length,
+      lineItems: invoiceData.lineItems.map(item => ({
+        description: item.description,
+        quantity: item.quantity,
+        unitAmount: item.unitAmount,
+        accountCode: item.accountCode
+      })),
+      currencyCode: invoiceData.currencyCode,
+      status: invoiceData.status
+    }, null, 2));
+    
     console.log("🔄 Creating invoice in Xero...");
     
-    // Create invoice in Xero
+    // Create invoice in Xero with enhanced error handling
     const response = await xero.accountingApi.createInvoices(tenantId, {
       invoices: [invoiceData]
     });
     
+    // Validate response
+    if (!response.body || !response.body.invoices || response.body.invoices.length === 0) {
+      throw new Error("Xero API returned empty response");
+    }
+    
     const createdInvoice = response.body.invoices[0];
+    
+    // Check for validation errors in the response
+    if (createdInvoice.validationErrors && createdInvoice.validationErrors.length > 0) {
+      const validationDetails = createdInvoice.validationErrors.map(err => err.message).join(", ");
+      throw new Error(`Xero validation errors: ${validationDetails}`);
+    }
     
     // Store invoice record
     const invoiceRecord = {
@@ -168,23 +211,45 @@ router.post("/shopify/order", async (req, res) => {
     });
     
   } catch (error) {
-    console.error("❌ Error creating invoice:", error);
+    // 🚨 Enhanced error logging and response
+    console.error("❌ Error Creating Invoice (Shopify)");
+    console.error("Error:", error);
+    console.error("Message:", error.message);
+    console.error("Stack:", error.stack);
     
-    // Store error record
+    // Log Xero-specific error details if available
+    if (error.response) {
+      console.error("📄 Xero API Response Status:", error.response.status);
+      console.error("📄 Xero API Response Headers:", error.response.headers);
+      console.error("📄 Xero API Response Body:", JSON.stringify(error.response.body, null, 2));
+    }
+    
+    // Store detailed error record for debugging
     const errorRecord = {
       orderId: order.id,
       orderNumber: order.order_number || order.name,
       error: error.message,
+      errorDetails: {
+        stack: error.stack,
+        response: error.response ? {
+          status: error.response.status,
+          body: error.response.body
+        } : null
+      },
       errorAt: new Date().toISOString(),
       orderData: order // Store for debugging
     };
     
     invoiceRecords.set(`error-${order.id}`, errorRecord);
     
+    // Return detailed error response
     res.status(500).json({
       success: false,
-      error: error.message,
-      message: "Failed to create invoice"
+      error: error.message || "Unknown error occurred",
+      details: error.response?.body || null,
+      message: "Failed to create invoice",
+      timestamp: new Date().toISOString(),
+      orderId: order.id
     });
   }
 });
@@ -200,7 +265,8 @@ router.post("/custom/order", async (req, res) => {
     if (!orderData.customer || !orderData.line_items || orderData.line_items.length === 0) {
       return res.status(400).json({
         success: false,
-        error: "Missing required fields: customer and line_items"
+        error: "Missing required fields: customer and line_items",
+        details: "Order must include customer information and at least one line item"
       });
     }
     
@@ -214,21 +280,66 @@ router.post("/custom/order", async (req, res) => {
       orderData.currency = "USD";
     }
     
-    // Transform and create invoice (same process as Shopify)
-    const tenantId = getTenantId();
-    if (!tenantId) {
-      throw new Error("Xero not connected. Please complete OAuth flow first.");
+    // 🔧 Enhanced connection verification with detailed logging
+    console.log("🔍 Checking Xero connection...");
+    
+    // Load and verify tokens
+    const savedTokens = loadTokensFromFile();
+    if (!savedTokens) {
+      throw new Error("No tokens found in tokens.json. Please complete OAuth flow first.");
     }
     
+    console.log("📊 Token status:", {
+      hasAccessToken: !!savedTokens.access_token,
+      hasRefreshToken: !!savedTokens.refresh_token,
+      tenantId: savedTokens.tenant_id,
+      savedAt: savedTokens.savedAt
+    });
+    
+    // Ensure Xero connection is established
+    const tenantId = await ensureXeroConnection();
+    if (!tenantId) {
+      throw new Error("Failed to establish Xero connection. Please check your OAuth setup.");
+    }
+    
+    console.log("✅ Xero connection verified. Tenant ID:", tenantId);
+    
+    // Transform order to invoice format
     const invoiceData = transformOrderToInvoice(orderData);
+    
+    console.log("📋 Invoice payload:", JSON.stringify({
+      type: invoiceData.type,
+      contact: invoiceData.contact.name,
+      lineItemsCount: invoiceData.lineItems.length,
+      lineItems: invoiceData.lineItems.map(item => ({
+        description: item.description,
+        quantity: item.quantity,
+        unitAmount: item.unitAmount,
+        accountCode: item.accountCode
+      })),
+      currencyCode: invoiceData.currencyCode,
+      status: invoiceData.status
+    }, null, 2));
     
     console.log("🔄 Creating invoice in Xero...");
     
+    // Create invoice in Xero with enhanced error handling
     const response = await xero.accountingApi.createInvoices(tenantId, {
       invoices: [invoiceData]
     });
     
+    // Validate response
+    if (!response.body || !response.body.invoices || response.body.invoices.length === 0) {
+      throw new Error("Xero API returned empty response");
+    }
+    
     const createdInvoice = response.body.invoices[0];
+    
+    // Check for validation errors in the response
+    if (createdInvoice.validationErrors && createdInvoice.validationErrors.length > 0) {
+      const validationDetails = createdInvoice.validationErrors.map(err => err.message).join(", ");
+      throw new Error(`Xero validation errors: ${validationDetails}`);
+    }
     
     // Store invoice record
     const invoiceRecord = {
@@ -265,12 +376,45 @@ router.post("/custom/order", async (req, res) => {
     });
     
   } catch (error) {
-    console.error("❌ Error creating custom invoice:", error);
+    // 🚨 Enhanced error logging and response
+    console.error("❌ Error Creating Invoice");
+    console.error("Error:", error);
+    console.error("Message:", error.message);
+    console.error("Stack:", error.stack);
     
+    // Log Xero-specific error details if available
+    if (error.response) {
+      console.error("📄 Xero API Response Status:", error.response.status);
+      console.error("📄 Xero API Response Headers:", error.response.headers);
+      console.error("📄 Xero API Response Body:", JSON.stringify(error.response.body, null, 2));
+    }
+    
+    // Store detailed error record for debugging
+    const errorRecord = {
+      orderId: orderData.id,
+      orderNumber: orderData.order_number || orderData.id,
+      error: error.message,
+      errorDetails: {
+        stack: error.stack,
+        response: error.response ? {
+          status: error.response.status,
+          body: error.response.body
+        } : null
+      },
+      errorAt: new Date().toISOString(),
+      orderData: orderData // Store for debugging
+    };
+    
+    invoiceRecords.set(`error-${orderData.id}`, errorRecord);
+    
+    // Return detailed error response
     res.status(500).json({
       success: false,
-      error: error.message,
-      message: "Failed to create invoice"
+      error: error.message || "Unknown error occurred",
+      details: error.response?.body || null,
+      message: "Failed to create invoice",
+      timestamp: new Date().toISOString(),
+      orderId: orderData.id
     });
   }
 });
@@ -300,6 +444,69 @@ router.get("/invoice/:orderId", (req, res) => {
     success: true,
     invoice: record
   });
+});
+
+// Debug endpoint to check connection status
+router.get("/debug/status", async (req, res) => {
+  try {
+    console.log("🔍 Debug: Checking system status...");
+    
+    // Load tokens from file
+    const savedTokens = loadTokensFromFile();
+    
+    // Check Xero connection
+    let connectionStatus = "disconnected";
+    let tenantId = null;
+    let connectionError = null;
+    
+    try {
+      tenantId = await ensureXeroConnection();
+      connectionStatus = tenantId ? "connected" : "failed";
+    } catch (err) {
+      connectionStatus = "error";
+      connectionError = err.message;
+    }
+    
+    res.json({
+      success: true,
+      debug: {
+        timestamp: new Date().toISOString(),
+        tokens: savedTokens ? {
+          hasAccessToken: !!savedTokens.access_token,
+          hasRefreshToken: !!savedTokens.refresh_token,
+          tenantId: savedTokens.tenant_id,
+          savedAt: savedTokens.savedAt,
+          expiresAt: savedTokens.expires_at
+        } : null,
+        xeroConnection: {
+          status: connectionStatus,
+          tenantId: tenantId,
+          error: connectionError
+        },
+        environment: {
+          nodeEnv: process.env.NODE_ENV,
+          hasClientId: !!process.env.XERO_CLIENT_ID,
+          hasClientSecret: !!process.env.XERO_CLIENT_SECRET,
+          redirectUri: process.env.XERO_REDIRECT_URI
+        },
+        invoiceRecords: {
+          total: invoiceRecords.size,
+          errors: Array.from(invoiceRecords.keys()).filter(key => key.startsWith('error-')).length
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error("❌ Debug endpoint error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      debug: {
+        timestamp: new Date().toISOString(),
+        error: "Failed to retrieve debug information"
+      }
+    });
+  }
 });
 
 module.exports = router; 
