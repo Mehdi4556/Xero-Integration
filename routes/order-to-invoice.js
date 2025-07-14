@@ -172,6 +172,22 @@ router.post("/shopify/order", async (req, res) => {
     // Check for validation errors in the response
     if (createdInvoice.validationErrors && createdInvoice.validationErrors.length > 0) {
       const validationDetails = createdInvoice.validationErrors.map(err => err.message).join(", ");
+      
+      // Special handling for currency errors
+      if (validationDetails.includes("not subscribed to currency")) {
+        const currencyMatch = validationDetails.match(/currency (\w+)/);
+        const rejectedCurrency = currencyMatch ? currencyMatch[1] : order.currency;
+        
+        // Try to get the organization's base currency for helpful error message
+        try {
+          const orgResponse = await xero.accountingApi.getOrganisations(tenantId);
+          const orgCurrency = orgResponse.body.organisations[0].baseCurrency;
+          throw new Error(`Currency ${rejectedCurrency} is not enabled for your Xero organization. Your organization's base currency is ${orgCurrency}. Please either: 1) Enable ${rejectedCurrency} in your Xero settings, or 2) Use ${orgCurrency} as the currency`);
+        } catch (orgErr) {
+          throw new Error(`Currency ${rejectedCurrency} is not enabled for your Xero organization. Please enable this currency in your Xero settings or use your organization's base currency instead.`);
+        }
+      }
+      
       throw new Error(`Xero validation errors: ${validationDetails}`);
     }
     
@@ -306,9 +322,18 @@ router.post("/custom/order", async (req, res) => {
       orderData.id = `custom-${Date.now()}`;
     }
     
-    // Set default currency if not provided
+    // Set default currency if not provided (get from Xero organization)
     if (!orderData.currency) {
-      orderData.currency = "USD";
+      try {
+        const tenantId = await ensureXeroConnection();
+        const orgResponse = await xero.accountingApi.getOrganisations(tenantId);
+        const orgCurrency = orgResponse.body.organisations[0].baseCurrency;
+        orderData.currency = orgCurrency;
+        console.log(`💰 Using organization's base currency: ${orgCurrency}`);
+      } catch (currencyErr) {
+        console.warn("⚠️ Could not fetch organization currency, defaulting to USD:", currencyErr.message);
+        orderData.currency = "USD";
+      }
     }
     
     // 🔧 Enhanced connection verification with detailed logging
@@ -369,6 +394,22 @@ router.post("/custom/order", async (req, res) => {
     // Check for validation errors in the response
     if (createdInvoice.validationErrors && createdInvoice.validationErrors.length > 0) {
       const validationDetails = createdInvoice.validationErrors.map(err => err.message).join(", ");
+      
+      // Special handling for currency errors
+      if (validationDetails.includes("not subscribed to currency")) {
+        const currencyMatch = validationDetails.match(/currency (\w+)/);
+        const rejectedCurrency = currencyMatch ? currencyMatch[1] : orderData.currency;
+        
+        // Try to get the organization's base currency for helpful error message
+        try {
+          const orgResponse = await xero.accountingApi.getOrganisations(tenantId);
+          const orgCurrency = orgResponse.body.organisations[0].baseCurrency;
+          throw new Error(`Currency ${rejectedCurrency} is not enabled for your Xero organization. Your organization's base currency is ${orgCurrency}. Please either: 1) Enable ${rejectedCurrency} in your Xero settings, or 2) Use ${orgCurrency} as the currency`);
+        } catch (orgErr) {
+          throw new Error(`Currency ${rejectedCurrency} is not enabled for your Xero organization. Please enable this currency in your Xero settings or use your organization's base currency instead.`);
+        }
+      }
+      
       throw new Error(`Xero validation errors: ${validationDetails}`);
     }
     

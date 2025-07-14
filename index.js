@@ -110,7 +110,8 @@ app.get("/test", (req, res) => {
           
           <div class="form-group">
             <label>Currency:</label>
-            <input type="text" id="currency" value="USD" required>
+            <input type="text" id="currency" value="" placeholder="Auto-detect from Xero">
+            <small style="color: #666;">Leave blank to use your Xero organization's base currency</small>
           </div>
           
           <button type="submit">🚀 Create Invoice</button>
@@ -136,7 +137,7 @@ app.get("/test", (req, res) => {
                 quantity: parseInt(document.getElementById('quantity').value),
                 price: parseFloat(document.getElementById('price').value)
               }],
-              currency: document.getElementById('currency').value
+              currency: document.getElementById('currency').value || undefined // Let server auto-detect
             };
             
             try {
