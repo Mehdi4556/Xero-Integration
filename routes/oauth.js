@@ -1,5 +1,6 @@
 const express = require("express");
 const { XeroClient } = require("xero-node");
+const fs = require('fs');
 const router = express.Router();
 
 // Add request tracking
@@ -85,6 +86,23 @@ const callbackHandler = async (req, res) => {
       const tenantId = xero.tenants[0]?.tenantId;
       console.log("🏢 Tenant ID:", tenantId);
       console.log("🏢 Number of tenants:", xero.tenants.length);
+
+      // 💾 Save tokens to JSON file (quick hack for testing)
+      const tokenData = {
+        access_token: tokenSet.access_token,
+        refresh_token: tokenSet.refresh_token,
+        id_token: tokenSet.id_token,
+        tenant_id: tenantId,
+        expires_at: tokenSet.expires_at,
+        timestamp: new Date().toISOString()
+      };
+      
+      try {
+        fs.writeFileSync('tokens.json', JSON.stringify(tokenData, null, 2));
+        console.log("💾 Tokens saved to tokens.json");
+      } catch (fileErr) {
+        console.error("❌ Failed to save tokens to file:", fileErr.message);
+      }
       
       // Initialize the Xero client with fresh tokens for other modules
       const { initializeWithTokens } = require("../xero/client");
@@ -98,9 +116,10 @@ const callbackHandler = async (req, res) => {
             <p><strong>Refresh Token:</strong> ${tokenSet.refresh_token ? 'Received' : 'Missing'}</p>
             <p><strong>Tenant ID:</strong> ${tenantId || 'Not available'}</p>
             <p><strong>Tenants:</strong> ${xero.tenants.length}</p>
+            <p><strong>Tokens Saved:</strong> Yes (tokens.json)</p>
             <p>Check your terminal for full details.</p>
             <hr>
-            <p><a href="/oauth/auth">🔄 Try again</a></p>
+            <p><a href="/oauth/auth">🔄 Try again</a> | <a href="/oauth/status">📊 Check Status</a></p>
           </body>
         </html>
       `);
@@ -108,6 +127,24 @@ const callbackHandler = async (req, res) => {
     } catch (tenantErr) {
       console.warn("⚠️ Could not fetch tenant information:", tenantErr.message);
       console.log("💡 Tokens are still valid, but tenant access may be limited");
+      
+      // Still save tokens even if tenant fetch fails
+      const tokenData = {
+        access_token: tokenSet.access_token,
+        refresh_token: tokenSet.refresh_token,
+        id_token: tokenSet.id_token,
+        tenant_id: null,
+        expires_at: tokenSet.expires_at,
+        timestamp: new Date().toISOString(),
+        tenant_error: tenantErr.message
+      };
+      
+      try {
+        fs.writeFileSync('tokens.json', JSON.stringify(tokenData, null, 2));
+        console.log("💾 Tokens saved to tokens.json (without tenant info)");
+      } catch (fileErr) {
+        console.error("❌ Failed to save tokens to file:", fileErr.message);
+      }
       
       res.send(`
         <html>
@@ -117,9 +154,10 @@ const callbackHandler = async (req, res) => {
             <p><strong>Refresh Token:</strong> ${tokenSet.refresh_token ? 'Received' : 'Missing'}</p>
             <p><strong>Issue:</strong> Could not fetch organization details</p>
             <p><strong>Reason:</strong> ${tenantErr.message}</p>
+            <p><strong>Tokens Saved:</strong> Yes (tokens.json)</p>
             <p>Your tokens are valid, but you may need additional permissions.</p>
             <hr>
-            <p><a href="/oauth/auth">🔄 Try again</a></p>
+            <p><a href="/oauth/auth">🔄 Try again</a> | <a href="/oauth/status">📊 Check Status</a></p>
           </body>
         </html>
       `);
@@ -150,11 +188,32 @@ router.get("/callback", callbackHandler);
 
 // Status endpoint for OAuth
 router.get("/status", (req, res) => {
+  let savedTokens = null;
+  
+  // 📖 Read tokens from JSON file
+  try {
+    if (fs.existsSync('tokens.json')) {
+      const tokenData = fs.readFileSync('tokens.json', 'utf8');
+      savedTokens = JSON.parse(tokenData);
+      console.log("📖 Tokens loaded from tokens.json");
+    }
+  } catch (fileErr) {
+    console.error("❌ Failed to read tokens from file:", fileErr.message);
+  }
+  
   res.json({
     authInProgress: isAuthInProgress,
     lastAuthTime: lastAuthTime ? new Date(lastAuthTime).toISOString() : null,
     hasTokens: !!xero.readTokenSet()?.access_token,
-    tenantCount: xero.tenants?.length || 0
+    tenantCount: xero.tenants?.length || 0,
+    savedTokens: savedTokens ? {
+      hasAccessToken: !!savedTokens.access_token,
+      hasRefreshToken: !!savedTokens.refresh_token,
+      hasIdToken: !!savedTokens.id_token,
+      tenantId: savedTokens.tenant_id,
+      savedAt: savedTokens.timestamp,
+      expiresAt: savedTokens.expires_at
+    } : null
   });
 });
 
