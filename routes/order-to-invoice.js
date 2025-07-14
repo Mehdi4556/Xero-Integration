@@ -254,12 +254,43 @@ router.post("/shopify/order", async (req, res) => {
   }
 });
 
+// Function to verify system readiness
+async function verifySystemReadiness() {
+  const issues = [];
+  
+  // Check environment variables
+  if (!process.env.XERO_CLIENT_ID) issues.push("Missing XERO_CLIENT_ID environment variable");
+  if (!process.env.XERO_CLIENT_SECRET) issues.push("Missing XERO_CLIENT_SECRET environment variable");
+  if (!process.env.XERO_REDIRECT_URI) issues.push("Missing XERO_REDIRECT_URI environment variable");
+  
+  // Check tokens file
+  const savedTokens = loadTokensFromFile();
+  if (!savedTokens) {
+    issues.push("No tokens.json file found");
+  } else {
+    if (!savedTokens.access_token) issues.push("No access_token in tokens.json");
+    if (!savedTokens.refresh_token) issues.push("No refresh_token in tokens.json");
+    if (!savedTokens.tenant_id) issues.push("No tenant_id in tokens.json");
+  }
+  
+  return issues;
+}
+
 // Custom frontend endpoint for order submission
 router.post("/custom/order", async (req, res) => {
   const orderData = req.body;
   
   try {
-    console.log("🛒 Received custom order:", orderData);
+    console.log("🛒 Received custom order:", JSON.stringify(orderData, null, 2));
+    
+    // Pre-flight system check
+    console.log("🔍 Running pre-flight system checks...");
+    const systemIssues = await verifySystemReadiness();
+    if (systemIssues.length > 0) {
+      console.error("⚠️ System readiness issues:", systemIssues);
+      throw new Error(`System not ready: ${systemIssues.join(", ")}`);
+    }
+    console.log("✅ Pre-flight checks passed");
     
     // Validate required fields
     if (!orderData.customer || !orderData.line_items || orderData.line_items.length === 0) {
@@ -378,28 +409,66 @@ router.post("/custom/order", async (req, res) => {
   } catch (error) {
     // 🚨 Enhanced error logging and response
     console.error("❌ Error Creating Invoice");
+    console.error("Error Object Type:", typeof error);
+    console.error("Error Constructor:", error.constructor.name);
     console.error("Error:", error);
-    console.error("Message:", error.message);
-    console.error("Stack:", error.stack);
+    console.error("Error Message:", error.message);
+    console.error("Error Name:", error.name);
+    console.error("Error Stack:", error.stack);
+    console.error("Error String:", String(error));
+    console.error("Error JSON:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    
+    // Log all enumerable properties
+    console.error("Error Properties:");
+    for (const key in error) {
+      console.error(`  ${key}:`, error[key]);
+    }
     
     // Log Xero-specific error details if available
     if (error.response) {
       console.error("📄 Xero API Response Status:", error.response.status);
+      console.error("📄 Xero API Response StatusText:", error.response.statusText);
       console.error("📄 Xero API Response Headers:", error.response.headers);
-      console.error("📄 Xero API Response Body:", JSON.stringify(error.response.body, null, 2));
+      
+      try {
+        console.error("📄 Xero API Response Body:", JSON.stringify(error.response.body, null, 2));
+      } catch (e) {
+        console.error("📄 Xero API Response Body (raw):", error.response.body);
+      }
+      
+      if (error.response.data) {
+        console.error("📄 Xero API Response Data:", JSON.stringify(error.response.data, null, 2));
+      }
+    }
+    
+    // Check if it's an axios error
+    if (error.isAxiosError) {
+      console.error("🌐 Axios Error Details:");
+      console.error("  Request URL:", error.config?.url);
+      console.error("  Request Method:", error.config?.method);
+      console.error("  Request Headers:", error.config?.headers);
+      console.error("  Request Data:", error.config?.data);
     }
     
     // Store detailed error record for debugging
     const errorRecord = {
       orderId: orderData.id,
       orderNumber: orderData.order_number || orderData.id,
-      error: error.message,
+      error: error.message || error.toString() || "Unknown error",
+      errorType: error.constructor.name,
       errorDetails: {
+        name: error.name,
+        message: error.message,
         stack: error.stack,
+        stringified: String(error),
+        allProperties: JSON.stringify(error, Object.getOwnPropertyNames(error), 2),
         response: error.response ? {
           status: error.response.status,
-          body: error.response.body
-        } : null
+          statusText: error.response.statusText,
+          body: error.response.body,
+          data: error.response.data
+        } : null,
+        isAxiosError: error.isAxiosError || false
       },
       errorAt: new Date().toISOString(),
       orderData: orderData // Store for debugging
@@ -407,11 +476,26 @@ router.post("/custom/order", async (req, res) => {
     
     invoiceRecords.set(`error-${orderData.id}`, errorRecord);
     
+    // Determine the best error message to return
+    let errorMessage = "Unknown error occurred";
+    if (error.message) {
+      errorMessage = error.message;
+    } else if (error.toString && error.toString() !== "[object Object]") {
+      errorMessage = error.toString();
+    } else if (typeof error === "string") {
+      errorMessage = error;
+    }
+    
     // Return detailed error response
     res.status(500).json({
       success: false,
-      error: error.message || "Unknown error occurred",
-      details: error.response?.body || null,
+      error: errorMessage,
+      errorType: error.constructor.name,
+      details: {
+        response: error.response?.body || error.response?.data || null,
+        isAxiosError: error.isAxiosError || false,
+        allErrorData: JSON.stringify(error, Object.getOwnPropertyNames(error), 2)
+      },
       message: "Failed to create invoice",
       timestamp: new Date().toISOString(),
       orderId: orderData.id
@@ -444,6 +528,57 @@ router.get("/invoice/:orderId", (req, res) => {
     success: true,
     invoice: record
   });
+});
+
+// Test endpoint to verify Xero connection
+router.get("/test/connection", async (req, res) => {
+  try {
+    console.log("🧪 Testing Xero connection...");
+    
+    // Run system checks
+    const systemIssues = await verifySystemReadiness();
+    if (systemIssues.length > 0) {
+      return res.json({
+        success: false,
+        error: "System not ready",
+        issues: systemIssues
+      });
+    }
+    
+    // Test connection
+    const tenantId = await ensureXeroConnection();
+    if (!tenantId) {
+      return res.json({
+        success: false,
+        error: "Failed to establish Xero connection"
+      });
+    }
+    
+    // Try to fetch organisations (simple test API call)
+    const orgResponse = await xero.accountingApi.getOrganisations(tenantId);
+    const organisation = orgResponse.body.organisations[0];
+    
+    console.log("✅ Xero connection test successful");
+    
+    res.json({
+      success: true,
+      message: "Xero connection working",
+      organisation: {
+        name: organisation.name,
+        countryCode: organisation.countryCode,
+        currencyCode: organisation.baseCurrency
+      },
+      tenantId: tenantId
+    });
+    
+  } catch (error) {
+    console.error("❌ Xero connection test failed:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Connection test failed",
+      details: error.response?.body || null
+    });
+  }
 });
 
 // Debug endpoint to check connection status
