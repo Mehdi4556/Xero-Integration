@@ -733,28 +733,28 @@ router.post("/send-quote-to-xero", async (req, res) => {
   console.log("📋 Received quote data for Xero integration:", req.body);
   
   try {
-    const { customerName, customerEmail, customerPhone, quoteId, items, currency } = req.body;
-    
-    // Validation - Check if items list is empty
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      console.log("❌ Quote validation failed: Empty items list");
-      return res.status(400).json({
-        success: false,
-        error: "Items list cannot be empty",
-        timestamp: new Date().toISOString()
-      });
-    }
-    
+    const { quoteId, customer, items } = req.body;
+
     // Validation - Check required fields
-    if (!customerName || !quoteId) {
+    if (!quoteId || !customer?.name) {
       console.log("❌ Quote validation failed: Missing required fields");
       return res.status(400).json({
         success: false,
-        error: "Customer name and quote ID are required",
+        error: 'Customer name and quote ID are required',
         timestamp: new Date().toISOString()
       });
     }
-    
+
+    // Validation - Check if items list is empty
+    if (!items || !items.length) {
+      console.log("❌ Quote validation failed: Empty items list");
+      return res.status(400).json({
+        success: false,
+        error: 'Items list cannot be empty',
+        timestamp: new Date().toISOString()
+      });
+    }
+
     console.log("🔐 Ensuring Xero connection...");
     
     // Ensure we have a valid Xero connection
@@ -764,30 +764,41 @@ router.post("/send-quote-to-xero", async (req, res) => {
     }
     
     console.log("✅ Xero connection verified. Tenant ID:", tenantId);
-    
-    // Transform quote to Xero invoice format
-    const invoiceData = transformQuoteToInvoice(req.body);
+
+    // Create Xero invoice payload
+    const invoicePayload = {
+      Type: 'ACCREC',
+      Contact: {
+        Name: customer.name,
+        ...(customer.email && { EmailAddress: customer.email }),
+        ...(customer.phone && { Phone: customer.phone })
+      },
+      LineItems: items.map((item) => ({
+        Description: item.description,
+        Quantity: item.quantity,
+        UnitAmount: item.unitAmount,
+        AccountCode: '200', // Use AccountCode 200 as specified
+      })),
+      Status: 'DRAFT',
+      LineAmountTypes: 'Exclusive',
+      Reference: `Quote: ${quoteId}`,
+      Date: new Date().toISOString().split('T')[0], // Today's date
+      DueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 30 days from now
+    };
     
     console.log("📋 Quote invoice payload:", JSON.stringify({
-      type: invoiceData.type,
-      contact: invoiceData.contact.name,
-      lineItemsCount: invoiceData.lineItems.length,
-      lineItems: invoiceData.lineItems.map(item => ({
-        description: item.description,
-        quantity: item.quantity,
-        unitAmount: item.unitAmount,
-        accountCode: item.accountCode
-      })),
-      currencyCode: invoiceData.currencyCode,
-      status: invoiceData.status,
-      reference: invoiceData.reference
+      Type: invoicePayload.Type,
+      Contact: invoicePayload.Contact.Name,
+      LineItemsCount: invoicePayload.LineItems.length,
+      Status: invoicePayload.Status,
+      Reference: invoicePayload.Reference
     }, null, 2));
     
     console.log("🔄 Creating draft invoice in Xero...");
     
     // Create draft invoice in Xero
     const response = await xero.accountingApi.createInvoices(tenantId, {
-      invoices: [invoiceData]
+      invoices: [invoicePayload]
     });
     
     // Validate response
@@ -804,7 +815,7 @@ router.post("/send-quote-to-xero", async (req, res) => {
       // Special handling for currency errors
       if (validationDetails.includes("not subscribed to currency")) {
         const currencyMatch = validationDetails.match(/currency (\w+)/);
-        const rejectedCurrency = currencyMatch ? currencyMatch[1] : currency;
+        const rejectedCurrency = currencyMatch ? currencyMatch[1] : 'USD';
         
         console.log(`❌ Currency error for quote ${quoteId}: ${rejectedCurrency} not enabled`);
         
@@ -839,12 +850,15 @@ router.post("/send-quote-to-xero", async (req, res) => {
     // Success response
     res.json({
       success: true,
+      xeroResponse: {
+        invoiceId: createdInvoice.invoiceID,
+        invoiceNumber: createdInvoice.invoiceNumber,
+        status: createdInvoice.status,
+        reference: createdInvoice.reference,
+        total: createdInvoice.total,
+        url: `https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${createdInvoice.invoiceID}`
+      },
       message: "Quote successfully sent to Xero as draft invoice",
-      xeroInvoiceId: createdInvoice.invoiceID,
-      xeroInvoiceNumber: createdInvoice.invoiceNumber,
-      status: createdInvoice.status,
-      reference: createdInvoice.reference,
-      url: `https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${createdInvoice.invoiceID}`,
       timestamp: new Date().toISOString()
     });
     
@@ -860,7 +874,8 @@ router.post("/send-quote-to-xero", async (req, res) => {
     
     res.status(500).json({
       success: false,
-      error: error.message,
+      error: 'Internal server error',
+      details: error.message,
       timestamp: new Date().toISOString()
     });
   }
