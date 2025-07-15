@@ -2,10 +2,9 @@ require('./force-timing-patch'); // ⬅️ Must be first to patch JWT error
 require('dotenv').config();
 
 const express = require("express");
-const bodyParser = require("body-parser");
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
 // Routes
 const shopifyWebhook = require("./routes/shopifyWebhook");
