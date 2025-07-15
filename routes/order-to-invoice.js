@@ -730,10 +730,18 @@ function transformQuoteToInvoice(quoteData) {
 
 // POST /api/send-quote-to-xero - Send quote to Xero as draft invoice
 router.post("/send-quote-to-xero", async (req, res) => {
-  console.log("📋 Received quote data for Xero integration:", req.body);
+  console.log("📋 Received quote data for Xero integration:");
+  console.log("📋 Request body:", JSON.stringify(req.body, null, 2));
+  console.log("📋 Content-Type:", req.headers['content-type']);
+  console.log("📋 Request method:", req.method);
   
   try {
     const { quoteId, customer, items } = req.body;
+    
+    console.log("📋 Extracted data:");
+    console.log("  - quoteId:", quoteId);
+    console.log("  - customer:", customer);
+    console.log("  - items:", items);
 
     // Validation - Check required fields
     if (!quoteId || !customer?.name) {
@@ -757,6 +765,11 @@ router.post("/send-quote-to-xero", async (req, res) => {
 
     console.log("🔐 Ensuring Xero connection...");
     
+    // Check if xero client is available
+    if (!xero) {
+      throw new Error("Xero client not initialized");
+    }
+    
     // Ensure we have a valid Xero connection
     const tenantId = await ensureXeroConnection();
     if (!tenantId) {
@@ -764,6 +777,8 @@ router.post("/send-quote-to-xero", async (req, res) => {
     }
     
     console.log("✅ Xero connection verified. Tenant ID:", tenantId);
+    console.log("✅ Xero client available:", !!xero);
+    console.log("✅ Xero accounting API available:", !!xero.accountingApi);
 
     // Create Xero invoice payload
     const invoicePayload = {
@@ -786,7 +801,7 @@ router.post("/send-quote-to-xero", async (req, res) => {
       DueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 30 days from now
     };
     
-    console.log("📋 Quote invoice payload:", JSON.stringify({
+    console.log("📋 Quote invoice payload summary:", JSON.stringify({
       Type: invoicePayload.Type,
       Contact: invoicePayload.Contact.Name,
       LineItemsCount: invoicePayload.LineItems.length,
@@ -794,12 +809,18 @@ router.post("/send-quote-to-xero", async (req, res) => {
       Reference: invoicePayload.Reference
     }, null, 2));
     
+    console.log("🚀 Full invoice payload being sent to Xero:", JSON.stringify(invoicePayload, null, 2));
+    console.log("🏢 Using Tenant ID:", tenantId);
+    
     console.log("🔄 Creating draft invoice in Xero...");
     
     // Create draft invoice in Xero
     const response = await xero.accountingApi.createInvoices(tenantId, {
       invoices: [invoicePayload]
     });
+    
+    console.log("📥 Raw Xero response status:", response?.status);
+    console.log("📥 Raw Xero response body:", JSON.stringify(response?.body, null, 2));
     
     // Validate response
     if (!response.body || !response.body.invoices || response.body.invoices.length === 0) {
@@ -862,20 +883,28 @@ router.post("/send-quote-to-xero", async (req, res) => {
       timestamp: new Date().toISOString()
     });
     
-  } catch (error) {
-    console.error("❌ Failed to send quote to Xero:", error);
+  } catch (err) {
+    // Enhanced error logging
+    console.error('❌ Internal Error Details:');
+    console.error('Error object:', err);
+    console.error('Error message:', err?.message);
+    console.error('Error stack:', err?.stack);
+    console.error('Xero response data:', err?.response?.data);
+    console.error('Full error:', JSON.stringify(err, Object.getOwnPropertyNames(err), 2));
     
     // Log failure details
     console.log("❌ Quote to Xero failure details:", {
       quoteId: req.body.quoteId,
-      error: error.message,
+      customer: req.body.customer?.name,
+      itemsCount: req.body.items?.length,
+      error: err?.message,
       timestamp: new Date().toISOString()
     });
     
     res.status(500).json({
       success: false,
       error: 'Internal server error',
-      details: error.message,
+      details: err?.message || 'Unknown error occurred',
       timestamp: new Date().toISOString()
     });
   }
