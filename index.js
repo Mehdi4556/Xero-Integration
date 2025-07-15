@@ -186,11 +186,9 @@ app.get("/test", (req, res) => {
   `);
 });
 
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log(`🚀 Shopify-Xero Integration Server running on port ${PORT}`);
-  console.log("🔐 Visit /oauth/auth to start OAuth flow");
-  console.log("📊 Visit /oauth/status for OAuth status");
-  console.log("🏠 Visit / for main dashboard");
+app.listen(3000, () => {
+  console.log("🚀 Shopify-Xero Integration Server running on http://localhost:3000");
+  console.log("🔐 Visit http://localhost:3000/oauth/auth to start OAuth flow");
+  console.log("📊 Visit http://localhost:3000/oauth/status for OAuth status");
+  console.log("🏠 Visit http://localhost:3000 for main dashboard");
 });
