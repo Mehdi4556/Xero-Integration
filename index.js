@@ -39,6 +39,7 @@ app.get("/", (req, res) => {
         <ul>
           <li><strong>POST</strong> /api/shopify/order - Shopify Webhook Handler</li>
           <li><strong>POST</strong> /api/custom/order - Custom Order Submission</li>
+          <li><strong>POST</strong> /api/send-quote-to-xero - 📝 Send Quote to Xero as Draft Invoice</li>
           <li><a href="/api/invoices">📋 View Invoice Records</a></li>
           <li><a href="/test">🧪 Test Order Form</a></li>
         </ul>
